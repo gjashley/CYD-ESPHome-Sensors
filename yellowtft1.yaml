@@ -1,0 +1,544 @@
+#
+# Basic yaml code to collect sensor data and display it on the display
+#
+#
+# This yaml displays the text Hello World centered in the display.
+#
+# Written by Gareth Ashley
+# - [GitHub](https://github.com/gjashley)
+#
+# ============================================================ 
+# NOTE:
+# In order for this to work you need to add the following settings in your secrets.yaml file:
+# - api_key
+# - ota_password
+# - wifi_ssid
+# - wifi_password
+# - ap_password
+#
+# Create a folder named fonts in your ESPHome folder, and copy the file fonts/lucon.ttf there.
+#
+# ============================================================ 
+# Example file setup
+# Change the naming below, they will be the names used in Home Assistant
+#
+
+substitutions: 
+  device_name: yellowtft1
+  friendly_name: Yellow TFT 1
+  
+esphome:
+  name: $device_name
+  friendly_name: $friendly_name
+  compile_process_limit: 1
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: $device_name Fallback Hotspot
+    password: !secret ap_password
+
+captive_portal:
+
+globals:
+# sets up the variable which alows the displays to rotate through pages
+  - id: rotate
+    type: boolean
+    initial_value: "true"
+    
+# This defines i2c pins if you are using connector CN1 (near the SD card)
+# You can use the pigtail that comes with the CYD and connect to the correct i2c pins of the sensors
+# I connect the female dupont connectors to a STEMMA QT pigtail with male dupont connectors
+# If your eyes are better than mine, you can crimp a JST MX 1.2mm 4 pin male a JST SH 4 pin 1.0mm 4 pin male
+i2c:
+  sda: 22
+  scl: 27
+  scan: true
+  id: bus_a
+
+# This defines the BME680 sensor, the BME280 is cheaper but just has temp and humidity
+# Other i2c temperature sensors should work as long as ESPHome support them
+# NOTE: This uses the bme680_bsec (Bosch Sensortec Environmental Cluster) library from Bosch. 
+# It gives more sensor data but it is not open source. By using this library you accept Bosch's terms. 
+# If you don't like that use 'bme680' (drop the '_bsec'), but you won't get IAQ data 
+# See https://esphome.io/components/sensor/bme680_bsec.html?highlight=bme680_bsec
+bme680_bsec:
+    id: bme680_internal
+    #This is the default address on most BME680 units 
+    address: 0x77
+    temperature_offset: 0
+    # change to 'iaq_mode: static' if the sensor stays in the same place
+    iaq_mode: mobile
+    # 'lp' samples evry 3 seconds, change to 'sample_rate_ulp' '(=ultra low power' to sample overy 5 mins)
+    sample_rate: lp
+    # how often it recalibrates itslef, default is 6h
+    state_save_interval: 2h
+
+sensor:
+  # This sets the BME680 sensor variables
+  # NOTE: I'm using the Adafruit BME680 breakout board  with STEMMA QT ports
+  - platform: bme680_bsec
+    bme680_bsec_id: bme680_internal
+    temperature:
+      # Temperature is in °C ... I don't know how to do °F
+      name: "BME680 Temperature"
+      id: "temperature"
+      sample_rate: lp
+      filters:
+        - median
+    pressure:
+      # Pressure is in hPa
+      name: "BME680 Pressure"
+      id: "pressure"
+      sample_rate: lp
+      filters:
+        - median
+    humidity:
+      # Relative humidity is on %
+      name: "BME680 Humidity"
+      id: "humidity"
+      sample_rate: lp
+      filters:
+        - median
+    gas_resistance:
+      # Gas resistance is in Ω
+      name: "BME680 Gas Resistance"
+      id: "gas_resistance"
+      filters:
+        - median
+    iaq:
+      # Indoor air quality value
+      # This is specific to the bme680_bsec library, scaling factor calculated based on the recent sensor history
+      name: "BME680 IAQ"
+      id: "iaq"
+      filters:
+        - median
+    iaq_accuracy:
+      # IAQ accuracy - calibration status - as a numeric value of 0, 1, 2, 3
+      name: "BME680 Numeric IAQ Accuracy"
+      id: iaq_acc
+    co2_equivalent:
+      # CO2 equivalent estimate in ppm
+      # This is specific to the bme680_bsec library, derived from IAQ and VOCeq
+      # i.e. NOT 'True CO2', if you want that use something like a SCD4x based sensor
+      name: "BME680 CO2 Equivalent"
+      id: "co2_equiv"
+      filters:
+        - median
+    breath_voc_equivalent:
+      # Volatile organic compounds equivalent estimate in ppm, derived from IAQ and reference lab data
+      name: "BME680 Breath VOC Equivalent"
+      id: "voc_equiv"
+      filters:
+        - median
+
+  # This sets the PMSA300i sensor variables
+  # NOTE: I'm using the Adafruit PMSA003i breakout board with STEMMA QT ports
+  # NOTE: Make sure you get the one with 'i' on the end of the name, that's the i2c one, the others are UART  
+  - platform: pmsa003i
+    # This fixed a problem where the board wouldt report anything when it's plugged in
+    setup_priority: -100
+    standard_units: True
+    # Overall sample frequency. 
+    # NOTE: Bear in mind how it impacts moving average reporting, update_interval * window_size = time to get accurate calculated average
+    update_interval: 2s
+    # Particulate Mass sensor values  
+    pm_1_0:
+      name: "PM1.0"
+      id: "pm010"
+    pm_2_5:
+      name: "PM2.5"
+      id: "pm025"
+      filters:
+      - sliding_window_moving_average:
+        # Take this number of readings and calculate the average 
+          window_size: 10
+        # Push out the average after this number of readings  
+          send_every: 10
+      on_value:
+        # Calculates PM2.5 AQI based on USA EPA formula when each 'send_every' reading is published 
+        # https://en.wikipedia.org/wiki/Air_quality_index#Computing_the_AQI
+        lambda: |-
+          if (id(pm025).state < 12.0) {
+            // good
+            id(pm_2_5_aqi).publish_state((50.0 - 0.0) / (12.0 - 0.0) * (id(pm025).state - 0.0) + 0.0);
+          } else if (id(pm025).state < 35.4) {
+            // moderate
+            id(pm_2_5_aqi).publish_state((100.0 - 51.0) / (35.4 - 12.1) * (id(pm025).state - 12.1) + 51.0);
+          } else if (id(pm025).state < 55.4) {
+            // usg
+            id(pm_2_5_aqi).publish_state((150.0 - 101.0) / (55.4 - 35.5) * (id(pm025).state - 35.5) + 101.0);
+          } else if (id(pm025).state < 150.4) {
+            // unhealthy
+            id(pm_2_5_aqi).publish_state((200.0 - 151.0) / (150.4 - 55.5) * (id(pm025).state - 55.5) + 151.0);
+          } else if (id(pm025).state < 250.4) {
+            // very unhealthy
+            id(pm_2_5_aqi).publish_state((300.0 - 201.0) / (250.4 - 150.5) * (id(pm025).state - 150.5) + 201.0);
+          } else if (id(pm025).state < 350.4) {
+            // hazardous
+            id(pm_2_5_aqi).publish_state((400.0 - 301.0) / (350.4 - 250.5) * (id(pm025).state - 250.5) + 301.0);
+          } else if (id(pm025).state < 500.4) {
+            // hazardous 2
+            id(pm_2_5_aqi).publish_state((500.0 - 401.0) / (500.4 - 350.5) * (id(pm025).state - 350.5) + 401.0);
+          }
+    pm_10_0:
+      name: "PM10.0"
+      id: "pm100"
+      filters:
+      - sliding_window_moving_average:
+        # // take this number of readings and calculate the average 
+          window_size: 10
+        # // push out the average after this number of readings  
+          send_every: 10
+      on_value:
+        # Calculates PM10.0 AQI based on USA EPA formula when each 'send_every' reading is published
+        # https://en.wikipedia.org/wiki/Air_quality_index#Computing_the_AQI
+        lambda: |-
+          if (id(pm100).state < 54.0) {
+            // good
+            id(pm_10_0_aqi).publish_state((50.0 - 0.0) / (54.0 - 0.0) * (id(pm100).state - 0.0) + 0.0);
+          } else if (id(pm100).state < 55) {
+            // moderate
+            id(pm_10_0_aqi).publish_state((100.0 - 51.0) / (154 - 55) * (id(pm100).state - 55) + 51.0);
+          } else if (id(pm100).state < 155) {
+            // usg
+            id(pm_10_0_aqi).publish_state((150.0 - 101.0) / (254 - 155) * (id(pm100).state - 155) + 101.0);
+          } else if (id(pm100).state < 354) {
+            // unhealthy
+            id(pm_10_0_aqi).publish_state((200.0 - 151.0) / (354 - 255) * (id(pm100).state - 255) + 151.0);
+          } else if (id(pm100).state < 424) {
+            // very unhealthy
+            id(pm_10_0_aqi).publish_state((300.0 - 201.0) / (424 - 355) * (id(pm100).state - 355) + 201.0);
+          } else if (id(pm100).state < 504) {
+            // hazardous
+            id(pm_10_0_aqi).publish_state((400.0 - 301.0) / (504 - 425) * (id(pm100).state - 425) + 301.0);
+          } else if (id(pm100).state < 604) {
+            // hazardous 2
+            id(pm_10_0_aqi).publish_state((500.0 - 401.0) / (604 - 505) * (id(pm100).state - 505) + 401.0);
+          }
+    # Particulate Count sensor values  
+    pmc_0_3:
+      name: "PMC >0.3µm"
+      id: "pmc003"
+    pmc_0_5:
+      name: "PMC >0.5µm"
+      id: "pmc005"
+    pmc_1_0:
+      name: "PMC >1µm"
+      id: "pmc010"
+    pmc_2_5:
+      name: "PMC >2.5µm"
+      id: "pmc025"
+    pmc_5_0:
+      name: "PMC >5µm"
+      id: "pmc050"
+    pmc_10_0:
+      name: "PMC >10µm"
+      id: "pmc100"
+
+    # Template sensor values for AQI Calculation   
+  - platform: template
+    name: "PM <2.5 AQI"
+    unit_of_measurement: "AQI"
+    accuracy_decimals: 0
+    id: pm_2_5_aqi
+  - platform: template
+    name: "PM <10.0 AQI"
+    unit_of_measurement: "AQI"
+    accuracy_decimals: 0
+    id: pm_10_0_aqi
+
+# Fonts - I like this gfont on the CYD for titles etc. The Lucida Console font is monospaced so it makes formatting easier
+# You need to copy the .TTF file into the "/config/esphome/fonts/lucon.ttf" folder, copy with lowercase name (that seems to matter)
+# If you chose another TTF font, make sure you define the following /°³Ω glyphs
+font:
+  - file:
+      type: gfonts
+      family: Gabarito
+      weight: 700
+    id: gabarito12
+    size: 12
+  - file:
+      type: gfonts
+      family: Gabarito
+      weight: 400
+    id: gabarito
+    size: 14
+  - file:
+      type: gfonts
+      family: Gabarito
+      weight: 900
+    id: gabaritoblack
+    size: 24
+  - file:
+      type: gfonts
+      family: Gabarito
+      weight: 900
+    id: gabaritoblackheading1
+    size: 28
+  - file: "fonts/lucon.ttf"
+    id: lucon14
+    size: 14
+    glyphs: " !%()<>+=,-_.:/°³Ωμ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+  - file: "fonts/lucon.ttf"
+    id: lucon
+    size: 12
+    glyphs: " !%()<>+=,-_.:/°³Ωμ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    
+# Colors, mess around with hex numbers a bit, color renders funny on the CYD
+color:
+  - id: RED
+    hex: FF0000
+    #red: 80%
+    #green: 5%
+    #blue: 5% 
+  - id: GREEN
+    hex: 00FF00
+    #red: 30%
+    #green: 80%
+    #blue: 0%
+  - id: BLUE 
+    hex: 87CEEB
+  - id: YELLOW
+    hex: FFFF00
+    #red: 100%
+    #green: 85%
+    #blue: 35%
+  - id: ORANGE
+    hex: FFA500
+    #red: 100%
+    #green: 67%
+    #blue: 20%
+  - id: SKYBLUE
+    hex: 87CEEB
+    #red: 53%
+    #green: 81%
+    #blue: 92%
+  - id: DEEPBLUE
+    hex: 02101D
+  - id: DEEPRED
+    hex: 2D0000
+  - id: MIDGREEN
+    hex: 6AA84F
+  - id: ROSE
+    hex: E06666
+  - id: MIDBLUE
+    hex: 3D85C6
+  - id: PURPLE
+    hex: 8E7CC3
+
+# Backlight setup
+light:
+  - platform: monochromatic
+    output: backlight_pwm
+    name: Display Backlight
+    id: backlight
+    restore_mode: ALWAYS_ON
+
+# ============================================================ 
+# Hardware related setup - lifted from Github reference projects 
+#
+# Setup SPI for the display. The ESP32-2432S028R uses separate SPI buses for display and touch
+spi:
+  - id: tft
+    clk_pin: GPIO14
+    mosi_pin: GPIO13
+    miso_pin: GPIO12
+  - id: touch
+    clk_pin: GPIO25
+    mosi_pin: GPIO32
+    miso_pin: GPIO39
+
+# Setup a pin to control the backlight
+output:
+  - platform: ledc
+    pin: GPIO21
+    id: backlight_pwm
+
+# Setup the ili9xxx platform
+# Display is used as 240x320 by default so we rotate it to 90°
+display:
+  - platform: ili9xxx
+    model: ili9341
+    spi_id: tft
+    cs_pin: GPIO15
+    dc_pin: GPIO2
+    rotation: 90
+    id: my_display
+# Render pages ... there must be an eadier way than this
+# 1st if statement translates the IAQ accuracy numbers to thir text descriptions
+# 2nd if statement translates the IAQ numbers to their classifications (as described in the Bosch BME280 Data Sheet)
+# 3rd if statement translates the AQI numbers to their classifications (as per USA EPA)
+    pages:
+      - id: BME
+        lambda: |-
+          it.fill(id(DEEPBLUE));
+          it.printf(75, 5, id(gabaritoblack), SKYBLUE, "BME680 via I2C");
+          it.printf(25, 45, id(gabarito), YELLOW, "TEMPERATURE");
+          it.printf(200, 45, id(lucon14), YELLOW, "%9.1f°C", id(temperature).state);
+          it.printf(25, 65, id(gabarito), ORANGE, "HUMIDITY");
+          it.printf(200, 65, id(lucon14), ORANGE, "%9.1f %%", id(humidity).state);
+          it.printf(25, 85, id(gabarito), ROSE, "PRESSURE");
+          it.printf(200, 85, id(lucon14), ROSE, "%9.0f hPa", id(pressure).state);      
+          it.printf(25, 105, id(gabarito), MIDBLUE, "GAS RESISTANCE");
+          it.printf(200, 105, id(lucon14), MIDBLUE, "%9.0f Ω", id(gas_resistance).state);  
+          it.printf(25, 125, id(gabarito), PURPLE, "CO2 EQUIV");
+          it.printf(200, 125, id(lucon14), PURPLE, "%9.2f ppm", id(co2_equiv).state);  
+          it.printf(25, 145, id(gabarito), PURPLE, "VOC EQUIV");
+          it.printf(200, 145, id(lucon14), PURPLE, "%9.2f ppm", id(voc_equiv).state);  
+          it.printf(25, 165, id(gabarito), MIDGREEN, "INDOOR AIR QUAL");
+          it.printf(200, 165, id(lucon14), MIDGREEN, "%9.1f IAQ", id(iaq).state);  
+          it.printf(25, 185, id(gabarito), MIDGREEN, "IAQ ACCURACY");
+          if (int(id(iaq_acc).state) <= 0) {
+            it.printf(185, 185, id(lucon14), MIDGREEN, "Stabilizing %0.0f", id(iaq_acc).state);
+          }
+          else if (int(id(iaq_acc).state) <= 1) {
+            it.printf(185, 185, id(lucon14), MIDGREEN, "  Uncertain %0.0f", id(iaq_acc).state);
+          }
+          else if (int(id(iaq_acc).state) <= 2) {
+            it.printf(185, 185, id(lucon14), MIDGREEN, "Calibrating %0.0f", id(iaq_acc).state);
+          }
+          else if (int(id(iaq_acc).state) <= 3) {
+            it.printf(185, 185, id(lucon14), MIDGREEN, " Calibrated %0.0f", id(iaq_acc).state);
+          } ;
+          if (int(id(iaq).state) <= 50) {
+            it.printf(35, 210, id(gabarito), GREEN, "IAQ = %0.0f = Indoor Air Quality Excellent", id(iaq).state);
+          }
+          else if (int(id(iaq).state) <= 100) {
+            it.printf(45, 210, id(gabarito), GREEN, "IAQ = %0.0f = Indoor Air Quality Good", id(iaq).state);
+          }
+          else if (int(id(iaq).state) <= 150) {
+            it.printf(55, 210, id(gabarito), ORANGE, "IAQ = %0.0f = Lightly Polluted", id(iaq).state);
+          }
+          else if (int(id(iaq).state) <= 200) {
+            it.printf(50, 210, id(gabarito), ORANGE, "IAQ = %0.0f = Moderately Polluted", id(iaq).state);
+          }
+          else if (int(id(iaq).state) <= 250) {
+            it.printf(55, 210, id(gabarito), ROSE, "IAQ = %0.0f = Heavily Polluted", id(iaq).state);
+          }
+          else if (int(id(iaq).state) <= 350) {
+            it.printf(55, 210, id(gabarito), ROSE, "IAQ = %0.0f = Severely Polluted", id(iaq).state);
+          }
+          else if (int(id(iaq).state) <= 500) {
+            it.printf(55, 210, id(gabarito), ROSE, "IAQ = %0.0f = Extremely Polluted", id(iaq).state);
+          }
+          else {
+            it.printf(40, 210, id(gabarito), GREEN, "IAQ = %0.0f = Indoor Air Quality Unknown", id(iaq).state);
+          } ;
+      - id: PMSA
+        lambda: |-
+          it.fill(id(DEEPRED));
+          it.printf(60, 5, id(gabaritoblack), SKYBLUE, "PMSA003I via I2C");
+          it.printf(180, 40, id(gabarito), ORANGE, "PARTICULATE MASS");
+          it.printf(180, 60, id(lucon), YELLOW, "< 1.0μm =%4.0f μg/m³", id(pm010).state);
+          it.printf(180, 90, id(lucon), YELLOW, "< 2.5μm =%4.0f μg/m³", id(pm025).state);
+          it.printf(180, 120, id(lucon), YELLOW, "<10.0μm =%4.0f μg/m³", id(pm100).state);
+          it.printf(15, 40, id(gabarito), MIDBLUE, "PARTICULATE COUNT");
+          it.printf(15, 60, id(lucon), MIDGREEN, "> 0.3μm =%5.0f μm/.1L", id(pmc003).state);          
+          it.printf(15, 75, id(lucon), MIDGREEN, "> 0.5μm =%5.0f μm/.1L", id(pmc005).state);    
+          it.printf(15, 90, id(lucon), MIDGREEN, "> 2.5μm =%5.0f μm/.1L", id(pmc025).state);    
+          it.printf(15, 105, id(lucon), MIDGREEN, "> 5.0μm =%5.0f μm/.1L", id(pmc050).state);    
+          it.printf(15, 120, id(lucon), MIDGREEN, ">10.0μm =%5.0f μm/.1L", id(pmc100).state);   
+          it.printf(60, 145, id(gabaritoblack), SKYBLUE, "CALCULATED AQI");          
+          if (int(id(pm_10_0_aqi).state) <= 50) {
+            it.printf(40, 180, id(gabarito), GREEN, "PM10.0 Air Quality Index = %0.0f = GOOD", id(pm_10_0_aqi).state);
+          }
+          else if (int(id(pm_10_0_aqi).state) <= 100) {
+            it.printf(30, 180, id(gabarito), GREEN, "PM10.0 Air Quality Index = %0.0f = MODERATE", id(pm_10_0_aqi).state);
+          }
+          else if (int(id(pm_10_0_aqi).state) <= 150) {
+            it.printf(5, 180, id(gabarito), ORANGE, "PM10.0 Air Quality Index = %0.0f = UNHEALTHY SG", id(pm_10_0_aqi).state);
+          }
+          else if (int(id(pm_10_0_aqi).state) <= 200) {
+            it.printf(20, 180, id(gabarito), ORANGE, "PM10.0 Air Quality Index = %0.0f = UNHEALTHY", id(pm_10_0_aqi).state);
+          }
+          else if (int(id(pm_10_0_aqi).state) <= 250) {
+            it.printf(0, 180, id(gabarito), RED, "PM10.0 Air Quality Index = %0.0f = VERY UNHEALTHY", id(pm_10_0_aqi).state);   
+          }
+          else if (int(id(pm_10_0_aqi).state) <= 350) {
+            it.printf(10, 180, id(gabarito), RED, "PM10.0 Air Quality Index = %0.0f = HAZARDOUS", id(pm_10_0_aqi).state);
+          }
+          else if (int(id(pm_10_0_aqi).state) <= 500) {
+            it.printf(0, 180, id(gabarito), RED, "PM10.0 Air Quality Index = %0.0f = VERY HAZARDOUS", id(pm_10_0_aqi).state); 
+          }
+          else {
+            it.printf(5, 180, id(gabarito), SKYBLUE, "PM10.0 Air Quality Index = %0.0f = CALCULATING", id(pm_10_0_aqi).state);  
+          } ;
+          if (int(id(pm_2_5_aqi).state) <= 50) {
+            it.printf(45, 210, id(gabarito), GREEN, "PM2.5 Air Quality Index = %0.0f = GOOD", id(pm_2_5_aqi).state);
+          }
+          else if (int(id(pm_2_5_aqi).state) <= 100) {
+            it.printf(35, 210, id(gabarito), GREEN, "PM2.5 Air Quality Index = %0.0f = MODERATE", id(pm_2_5_aqi).state);
+          }
+          else if (int(id(pm_2_5_aqi).state) <= 150) {
+            it.printf(5, 210, id(gabarito), ORANGE, "PM2.5 Air Quality Index = %0.0f = UNHEALTHY SG", id(pm_2_5_aqi).state);
+          }
+          else if (int(id(pm_2_5_aqi).state) <= 200) {
+            it.printf(22, 210, id(gabarito), ORANGE, "PM2.5 Air Quality Index = %0.0f = UNHEALTHY", id(pm_2_5_aqi).state);
+          }
+          else if (int(id(pm_2_5_aqi).state) <= 250) {
+            it.printf(0, 210, id(gabarito), RED, "PM2.5 Air Quality Index = %0.0f = VERY UNHEALTHY", id(pm_2_5_aqi).state);   
+          }
+          else if (int(id(pm_2_5_aqi).state) <= 350) {
+            it.printf(12, 210, id(gabarito), RED, "PM2.5 Air Quality Index = %0.0f = HAZARDOUS", id(pm_2_5_aqi).state);
+          }
+          else if (int(id(pm_2_5_aqi).state) <= 500) {
+            it.printf(0, 210, id(gabarito), RED, "PM2.5 Air Quality Index = %0.0f = VERY HAZARDOUS", id(pm_2_5_aqi).state); 
+          }
+          else {
+            it.printf(5, 210, id(gabarito), SKYBLUE, "PM2.5 Air Quality Index = %0.0f = CALCULATING", id(pm_2_5_aqi).state);  
+          } ;
+# Set up the SS1106 secondary display, it's the very common 0.96" one 
+  - platform: ssd1306_i2c
+    model: "SH1106 128x64"
+    # This seems to help
+    setup_priority: -200
+    # This is the default i2c address, some of the cheap imports have different ones
+    address: 0x3c
+    # Rotate, if you like
+    # rotation: 90
+    id: i2c_display
+    pages:
+      - id: temp
+        lambda: |-
+          it.print(20, 0, id(lucon), "TEMPERATURE");
+          it.printf(22, 25, id(gabaritoblack), "%0.1f°C", id(temperature).state);
+      - id: q250
+        lambda: |-
+          it.print(25, 0, id(lucon), "PM 2.5 AQI");
+          it.printf(48, 25, id(gabaritoblack), "%0.0f", id(pm_2_5_aqi).state);
+      - id: q100
+        lambda: |-
+          it.print(23, 0, id(lucon), "PM 10.0 AQI");
+          it.printf(48, 25, id(gabaritoblack), "%0.0f", id(pm_10_0_aqi).state);
+
+# Sets how frequently the pages cycle, for all screens 
+interval:
+  - interval: 10s
+    then:
+      if:
+        condition:
+          lambda: 'return id(rotate);'
+        then:
+          - display.page.show_next: my_display
+          - component.update: my_display     
+          - display.page.show_next: i2c_display
+          - component.update: i2c_display   
