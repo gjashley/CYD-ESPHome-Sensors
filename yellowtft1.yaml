@@ -20,7 +20,8 @@
 #
 # ============================================================ 
 # Example file setup
-# Change the naming below, they will be the names used in Home Assistant
+
+# Change the device name below, device will show up on ESPHome in Home Assistant
 #
 
 substitutions: 
@@ -98,12 +99,16 @@ sensor:
   - platform: bme680_bsec
     bme680_bsec_id: bme680_internal
     temperature:
-      # Temperature is in °C ... I don't know how to do °F
+      # Native sensor temperature is in °C, converted to °F below. 
+      # Remove "lambda: return x * (9.0/5.0) + 32.0" and change unit of measurement to use default
+      # (Also change lambda printf() text to °C in the display sections below)
       name: "BME680 Temperature"
       id: "temperature"
       sample_rate: lp
       filters:
         - median
+        - lambda: return x * (9.0/5.0) + 32.0;
+      unit_of_measurement: "°F"
     pressure:
       # Pressure is in hPa
       name: "BME680 Pressure"
@@ -307,43 +312,28 @@ font:
 color:
   - id: RED
     hex: FF0000
-    #red: 80%
-    #green: 5%
-    #blue: 5% 
-  - id: GREEN
-    hex: 00FF00
-    #red: 30%
-    #green: 80%
-    #blue: 0%
-  - id: BLUE 
-    hex: 87CEEB
-  - id: YELLOW
-    hex: FFFF00
-    #red: 100%
-    #green: 85%
-    #blue: 35%
-  - id: ORANGE
-    hex: FFA500
-    #red: 100%
-    #green: 67%
-    #blue: 20%
-  - id: SKYBLUE
-    hex: 87CEEB
-    #red: 53%
-    #green: 81%
-    #blue: 92%
-  - id: DEEPBLUE
-    hex: 02101D
   - id: DEEPRED
     hex: 2D0000
-  - id: MIDGREEN
-    hex: 6AA84F
   - id: ROSE
     hex: E06666
+  - id: GREEN
+    hex: 00FF00
+  - id: MIDGREEN
+    hex: 6AA84F
+   - id: BLUE 
+    hex: 87CEEB
+  - id: SKYBLUE
+    hex: 87CEEB
   - id: MIDBLUE
     hex: 3D85C6
+  - id: DEEPBLUE
+    hex: 02101D
   - id: PURPLE
     hex: 8E7CC3
+  - id: YELLOW
+    hex: FFFF00
+  - id: ORANGE
+    hex: FFA500
 
 # Backlight setup
 light:
@@ -393,7 +383,7 @@ display:
           it.fill(id(DEEPBLUE));
           it.printf(75, 5, id(gabaritoblack), SKYBLUE, "BME680 via I2C");
           it.printf(25, 45, id(gabarito), YELLOW, "TEMPERATURE");
-          it.printf(200, 45, id(lucon14), YELLOW, "%9.1f°C", id(temperature).state);
+          it.printf(200, 45, id(lucon14), YELLOW, "%9.1f°F", id(temperature).state);
           it.printf(25, 65, id(gabarito), ORANGE, "HUMIDITY");
           it.printf(200, 65, id(lucon14), ORANGE, "%9.1f %%", id(humidity).state);
           it.printf(25, 85, id(gabarito), ROSE, "PRESSURE");
@@ -420,22 +410,22 @@ display:
             it.printf(185, 185, id(lucon14), MIDGREEN, " Calibrated %0.0f", id(iaq_acc).state);
           } ;
           if (int(id(iaq).state) <= 50) {
-            it.printf(35, 210, id(gabarito), GREEN, "IAQ = %0.0f = Indoor Air Quality Excellent", id(iaq).state);
+            it.printf(40, 210, id(gabarito), GREEN, "IAQ = %0.0f = Indoor Air Quality Excellent", id(iaq).state);
           }
           else if (int(id(iaq).state) <= 100) {
-            it.printf(45, 210, id(gabarito), GREEN, "IAQ = %0.0f = Indoor Air Quality Good", id(iaq).state);
+            it.printf(50, 210, id(gabarito), GREEN, "IAQ = %0.0f = Indoor Air Quality Good", id(iaq).state);
           }
           else if (int(id(iaq).state) <= 150) {
-            it.printf(55, 210, id(gabarito), ORANGE, "IAQ = %0.0f = Lightly Polluted", id(iaq).state);
+            it.printf(60, 210, id(gabarito), ORANGE, "IAQ = %0.0f = Lightly Polluted", id(iaq).state);
           }
           else if (int(id(iaq).state) <= 200) {
             it.printf(50, 210, id(gabarito), ORANGE, "IAQ = %0.0f = Moderately Polluted", id(iaq).state);
           }
           else if (int(id(iaq).state) <= 250) {
-            it.printf(55, 210, id(gabarito), ROSE, "IAQ = %0.0f = Heavily Polluted", id(iaq).state);
+            it.printf(60, 210, id(gabarito), ROSE, "IAQ = %0.0f = Heavily Polluted", id(iaq).state);
           }
           else if (int(id(iaq).state) <= 350) {
-            it.printf(55, 210, id(gabarito), ROSE, "IAQ = %0.0f = Severely Polluted", id(iaq).state);
+            it.printf(60, 210, id(gabarito), ROSE, "IAQ = %0.0f = Severely Polluted", id(iaq).state);
           }
           else if (int(id(iaq).state) <= 500) {
             it.printf(55, 210, id(gabarito), ROSE, "IAQ = %0.0f = Extremely Polluted", id(iaq).state);
@@ -447,7 +437,7 @@ display:
         lambda: |-
           it.fill(id(DEEPRED));
           it.printf(60, 5, id(gabaritoblack), SKYBLUE, "PMSA003I via I2C");
-          it.printf(180, 40, id(gabarito), ORANGE, "PARTICULATE MASS");
+          it.printf(180, 40, id(gabarito), MIDBLUE, "PARTICULATE MASS");
           it.printf(180, 60, id(lucon), YELLOW, "< 1.0μm =%4.0f μg/m³", id(pm010).state);
           it.printf(180, 90, id(lucon), YELLOW, "< 2.5μm =%4.0f μg/m³", id(pm025).state);
           it.printf(180, 120, id(lucon), YELLOW, "<10.0μm =%4.0f μg/m³", id(pm100).state);
@@ -520,7 +510,7 @@ display:
       - id: temp
         lambda: |-
           it.print(20, 0, id(lucon), "TEMPERATURE");
-          it.printf(22, 25, id(gabaritoblack), "%0.1f°C", id(temperature).state);
+          it.printf(22, 25, id(gabaritoblack), "%0.1f°F", id(temperature).state);
       - id: q250
         lambda: |-
           it.print(25, 0, id(lucon), "PM 2.5 AQI");
