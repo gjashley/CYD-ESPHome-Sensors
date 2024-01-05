@@ -22,17 +22,21 @@ These are the sensors I used, but you should be able to substitute any i2c senso
     These are very common, I think I got a bunch from our favorite overseas electronic supplier, they also have them at our favorite mega online store.
 5. JST MX 1.2mm 4 pin male to female Dupont connector - like the one which came with your CYD
 6. JST SH 4 pin 1.0mm 4 pin male (STEMMA QT) to male Dupont connector
+
     [CYD -\> F/M Dupont -> BME680 STEMMA QT in]
 7. JST SH 4 pin 1.0mm 4 pin male (STEMMA QT) to JST SH 4 pin 1.0mm 4 pin male (STEMMA QT)
+
     [BME680 STEMMA QT out -> PMSA003i STEMMA QT in]
 8. JST SH 4 pin 1.0mm 4 pin male (STEMMA QT) to female Dupont connector - my SH1106 had male headers already installed.
+
     [PMSA033i STEMMA QT -> SH1106]
 
 NOTE: All my cables had the same color scheme, but that's not always the case, check all the pins match:
-  VCC-- **RED**
-  GND-- **BLACK**
-  SCL-- **YELLOW**
-  SDA-- **BLUE**
+    
+    VCC - **RED**
+    GND - **BLACK**
+    SCL - **YELLOW**
+    SDA - **BLUE**
 
 I haven't thought about a case, because I don't have a (functional) 3d printer, I'll probably just screw it together with layers of that acrylic 'case' that you sometimes get with the CYD. I may shorten, re-terminate or solder some of the connections, I have a non-stemma BME680 board which was cheaper lying around, you can get a bare PMSA003i, but it likes 5v and the Adafruit board has a boost converter
 
